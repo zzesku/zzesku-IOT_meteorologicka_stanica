@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Environment Monitor</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Environment Intelligence</h1>
+        <p>Live data from your smart IoT weather system</p>
+    </header>
+
+    <section class="cards">
+        <div class="card">
+            <h2>Indoor</h2>
+            <div class="data"><span id="inTemp">--</span>°C</div>
+            <div class="sub">Humidity: <span id="inHum">--</span>%</div>
+            <div class="sub">Pressure: <span id="inPres">--</span> hPa</div>
+        </div>
+
+        <div class="card">
+            <h2>Outdoor</h2>
+            <div class="data"><span id="outTemp">--</span>°C</div>
+            <div class="sub">Humidity: <span id="outHum">--</span>%</div>
+            <div class="sub">Pressure: <span id="outPres">--</span> hPa</div>
+        </div>
+
+        <div class="card">
+           <h2>Light Level</h2>
+
+            <div class="sub">
+              Indoor: <span id="inLight">--</span> lux
+            </div>
+
+            <div class="sub">
+              Outdoor: <span id="outLight">--</span> lux
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Window</h2>
+            <div class="data" id="windowState">--</div>
+        </div>
+    </section>
+
+    <section class="advice">
+        <div class="section-header">
+            <h2>Smart Recommendations</h2>
+            <button onclick="clearAdvice()">Clear</button>
+        </div>
+        <ul id="adviceList" class="fade-list"></ul>
+        <button class="show-more" onclick="toggleOld('adviceList', this)">Show older messages</button>
+    </section>
+
+    <section class="chart-section">
+        <canvas id="tempChart"></canvas>
+    </section>
+
+    <section class="events">
+        <div class="section-header">
+            <h2>Smart Insights</h2>
+            <button onclick="clearEvents()">Clear</button>
+        </div>
+        <ul id="eventsList" class="fade-list"></ul>
+        <button class="show-more" onclick="toggleOld('eventsList', this)">Show older messages</button>
+    </section>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
