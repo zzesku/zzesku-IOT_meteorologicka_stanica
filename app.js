@@ -1,7 +1,10 @@
-const API_URL = "/api/latest";
-const HISTORY_URL = "/api/history";
-const EVENTS_URL = "/api/events";
-const CLEAR_URL = "/api/admin/clear_db";
+const API_BASE = "https://zzesku.github.io/zzesku-IOT_meteorologicka_stanica/";
+
+const API_URL = `${API_BASE}/api/latest`;
+const HISTORY_URL = `${API_BASE}/api/history`;
+const EVENTS_URL = `${API_BASE}/api/events`;
+const CLEAR_URL = `${API_BASE}/api/admin/clear_db`;
+
 
 const POLL_MS = 5000;
 const EVENTS_POLL_MS = 6000;
@@ -386,3 +389,4 @@ setInterval(() => fetchEvents(6), EVENTS_POLL_MS);
 
 // initial history (1h) after small delay
 setTimeout(loadHistory, 2500);
+
