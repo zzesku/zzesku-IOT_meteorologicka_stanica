@@ -1,34 +1,45 @@
-// app.js — realtime data + recommendations/events from your Flask API
-const API_URL = "http://192.168.0.96:5000/api/latest";
-const POLL_MS = 5000;
+const API_URL = "/api/latest";
+const HISTORY_URL = "/api/history";
+const EVENTS_URL = "/api/events";
+const CLEAR_URL = "/api/admin/clear_db";
 
-// ====== DOM ======
+const POLL_MS = 5000;
+const EVENTS_POLL_MS = 6000;
+
+// ===== DOM =====
+const skTimeEl = document.getElementById("skTime");
+
 const inTemp  = document.getElementById("inTemp");
 const inHum   = document.getElementById("inHum");
 const inPres  = document.getElementById("inPres");
+const inLight = document.getElementById("inLight");
 
 const outTemp = document.getElementById("outTemp");
 const outHum  = document.getElementById("outHum");
 const outPres = document.getElementById("outPres");
-
-const lightSingle = document.getElementById("light");     // старый вариант (один lux)
-const inLight = document.getElementById("inLight");       // если добавишь в HTML
-const outLight = document.getElementById("outLight");     // если добавишь в HTML
+const outLight = document.getElementById("outLight");
 
 const windowState = document.getElementById("windowState");
-const adviceList = document.getElementById("adviceList");
-const eventsList = document.getElementById("eventsList");
+const windowMeta = document.getElementById("windowMeta");
+const indoorStatus = document.getElementById("indoorStatus");
+const outdoorStatus = document.getElementById("outdoorStatus");
 
-// ====== STATE ======
-let shownAdvice = {};
-let shownEvents = {};
-let prevWindow = null;
-let prevIndoorTemp = null;
-let prevOutdoorTemp = null;
+const aiFreshness = document.getElementById("aiFreshness");
+const aiSummaryEl = document.getElementById("aiSummary");
+const aiRecsEl = document.getElementById("aiRecs");
+const aiAlertsEl = document.getElementById("aiAlerts");
+const aiComfort = document.getElementById("aiComfort");
+const aiVent = document.getElementById("aiVent");
+const aiHumidity = document.getElementById("aiHumidity");
 
-// ====== CHART ======
+const notifList = document.getElementById("notifList");
+
+const rangeSel = document.getElementById("historyRange");
+const loadHistoryBtn = document.getElementById("loadHistoryBtn");
+const clearDbBtn = document.getElementById("clearDbBtn");
+
+// ===== CHARTS =====
 const tempCtx = document.getElementById("tempChart").getContext("2d");
-
 const tempChart = new Chart(tempCtx, {
   type: "line",
   data: {
@@ -45,81 +56,37 @@ const tempChart = new Chart(tempCtx, {
   },
 });
 
-// ====== HELPERS ======
+const histCtx = document.getElementById("historyChart").getContext("2d");
+const historyChart = new Chart(histCtx, {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: [
+      { label: "Indoor Temp", data: [], borderColor: "#ffffff", backgroundColor: "rgba(255,255,255,0.05)", tension: 0.35 },
+      { label: "Outdoor Temp", data: [], borderColor: "#c4161c", backgroundColor: "rgba(196,22,28,0.10)", tension: 0.35 },
+    ],
+  },
+  options: {
+    animation: false,
+    plugins: { legend: { labels: { color: "#ccc" } } },
+    scales: { x: { ticks: { color: "#888" } }, y: { ticks: { color: "#888" } } },
+  },
+});
+
+// ===== STATE =====
+let seenEventIds = new Set();
+
+// ===== HELPERS =====
 function format(val, digits = 1) {
   if (val === null || val === undefined || Number.isNaN(Number(val))) return "--";
   return Number(val).toFixed(digits);
 }
-
-function getStamp(indoor, outdoor) {
-  const t = indoor?.time_local || outdoor?.time_local;
-  if (!t) return new Date().toLocaleTimeString();
-  const parts = String(t).trim().split(" ");
-  return parts.length === 2 ? parts[1] : t;
-}
-
-function updateFade(listId) {
-  const items = document.querySelectorAll(`#${listId} li`);
-  items.forEach((item, idx) => {
-    if (idx >= 5) item.classList.add("fade-old");
-    else item.classList.remove("fade-old");
-  });
-}
-
-function toggleOld(listId, btn) {
-  const list = document.getElementById(listId);
-  list.classList.toggle("expanded");
-  if (list.classList.contains("expanded")) {
-    document.querySelectorAll(`#${listId} li`).forEach(li => li.classList.remove("fade-old"));
-    btn.textContent = "Hide older messages";
-  } else {
-    updateFade(listId);
-    btn.textContent = "Show older messages";
-  }
-}
-
-function addEvent(text, key, stamp) {
-  if (shownEvents[key]) return;
-  shownEvents[key] = true;
-
-  const li = document.createElement("li");
-  li.innerHTML = `${text} <span class="timestamp">${stamp}</span>`;
-  eventsList.prepend(li);
-  updateFade("eventsList");
-}
-
-function addAdvice(text, key, stamp) {
-  if (shownAdvice[key]) return;
-  shownAdvice[key] = true;
-
-  const li = document.createElement("li");
-  li.innerHTML = `${text} <span class="timestamp">${stamp}</span>`;
-  adviceList.prepend(li);
-  updateFade("adviceList");
-}
-
-function clearAdvice() {
-  adviceList.innerHTML = "";
-  shownAdvice = {};
-}
-function clearEvents() {
-  eventsList.innerHTML = "";
-  shownEvents = {};
-}
-
-// делаем функции глобальными (кнопки в HTML вызывают по имени)
-window.clearAdvice = clearAdvice;
-window.clearEvents = clearEvents;
-window.toggleOld = toggleOld;
-
-// ====== UI UPDATE ======
-function setText(el, val) {
-  if (!el) return;
-  el.textContent = val;
+function parseServerIsoToNice(iso) {
+  if (!iso) return "--";
+  return iso.replace("T", " ").slice(0, 19);
 }
 
 function setWindowState(open) {
-  if (!windowState) return;
   if (open === null || open === undefined) {
     windowState.textContent = "--";
     windowState.style.color = "";
@@ -129,10 +96,19 @@ function setWindowState(open) {
   windowState.style.color = open ? "#4caf50" : "#ff4d4d";
 }
 
-function pushChart(label, inT, outT) {
-  if (label) tempChart.data.labels.push(label);
-  else tempChart.data.labels.push(new Date().toLocaleTimeString());
+function setStatusPill(el, online, ageSec) {
+  if (!el) return;
+  if (online === null || online === undefined) {
+    el.textContent = "—";
+    return;
+  }
+  const age = (ageSec === null || ageSec === undefined) ? "--" : `${ageSec}s`;
+  el.textContent = `${online ? "Online" : "Offline"} • age ${age}`;
+  el.style.borderColor = online ? "rgba(76,175,80,0.35)" : "rgba(255,77,77,0.35)";
+}
 
+function pushLiveChart(label, inT, outT) {
+  tempChart.data.labels.push(label || "--");
   tempChart.data.datasets[0].data.push(inT ?? null);
   tempChart.data.datasets[1].data.push(outT ?? null);
 
@@ -145,189 +121,268 @@ function pushChart(label, inT, outT) {
   tempChart.update();
 }
 
-function updateUI(apiData) {
-  const indoor = apiData?.indoor || null;
-  const outdoor = apiData?.outdoor || null;
-
-  // online/offline (если API проставляет online)
-  const indoorOk = indoor && (indoor.online === undefined ? true : !!indoor.online);
-  const outdoorOk = outdoor && (outdoor.online === undefined ? true : !!outdoor.online);
-
-  // INDOOR
-  setText(inTemp, indoorOk ? format(indoor.temp_c) : "--");
-  setText(inHum,  indoorOk ? format(indoor.humidity_pct) : "--");
-  setText(inPres, indoorOk ? format(indoor.pressure_hpa) : "--");
-
-  // OUTDOOR
-  setText(outTemp, outdoorOk ? format(outdoor.temp_c) : "--");
-  setText(outHum,  outdoorOk ? format(outdoor.humidity_pct) : "--");
-  setText(outPres, outdoorOk ? format(outdoor.pressure_hpa) : "--");
-
-  // WINDOW (обычно с indoor pico)
-  const winOpen = indoorOk ? indoor.window_open : null;
-  setWindowState(winOpen);
-
-  // LUX: раздельно (если есть элементы), иначе в один span#light
-  const inLux = indoorOk ? indoor.lux : null;
-  const outLux = outdoorOk ? outdoor.lux : null;
-
-  if (inLight || outLight) {
-    setText(inLight, inLux != null ? format(inLux, 0) : "--");
-    setText(outLight, outLux != null ? format(outLux, 0) : "--");
-  } else {
-    const luxSingle = (outLux != null) ? outLux : inLux;
-    setText(lightSingle, luxSingle != null ? format(luxSingle, 0) : "--");
+function fillList(ul, items, emptyText) {
+  if (!ul) return;
+  ul.innerHTML = "";
+  if (!Array.isArray(items) || items.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = emptyText;
+    ul.appendChild(li);
+    return;
   }
-
-  // CHART
-  const stamp = getStamp(indoor, outdoor);
-  pushChart(stamp, indoorOk ? indoor.temp_c : null, outdoorOk ? outdoor.temp_c : null);
-
-  // RULES
-  runRules({
-    indoor: indoorOk ? indoor : null,
-    outdoor: outdoorOk ? outdoor : null,
-    window: indoorOk ? !!indoor.window_open : null,
-    lightIndoor: indoorOk ? indoor.lux : null,
-    lightOutdoor: outdoorOk ? outdoor.lux : null,
-    stamp
+  items.forEach((txt) => {
+    const li = document.createElement("li");
+    li.textContent = txt;
+    ul.appendChild(li);
   });
 }
 
-// ====== RECOMMENDATIONS + EVENTS ======
-function runRules(d) {
-  const stamp = d.stamp || new Date().toLocaleTimeString();
+// ===== AI RENDER =====
+function deriveBadges(indoor) {
+  const inT = indoor?.temp_c;
+  const inH = indoor?.humidity_pct;
+  const win = indoor?.window_open;
 
-  const inT = d.indoor?.temp_c;
-  const inH = d.indoor?.humidity_pct;
-  const inP = d.indoor?.pressure_hpa;
-
-  const outT = d.outdoor?.temp_c;
-  const outH = d.outdoor?.humidity_pct;
-  const outP = d.outdoor?.pressure_hpa;
-
-  const win = d.window; // true/false/null
-  const inLux = d.lightIndoor;
-  const outLux = d.lightOutdoor;
-
-  // ---- EVENTS: window toggled ----
-  if (win !== null && win !== prevWindow) {
-    if (prevWindow !== null) {
-      addEvent(win ? "Window opened" : "Window closed", "window_toggle_" + String(Date.now()), stamp);
-    }
-    prevWindow = win;
+  let comfort = "--";
+  if (inT != null) {
+    if (inT < 18) comfort = "Cold";
+    else if (inT <= 24) comfort = "Comfortable";
+    else comfort = "Warm";
   }
 
-  // ---- EVENTS: big temp jump ----
-  if (inT != null && prevIndoorTemp != null && Math.abs(inT - prevIndoorTemp) >= 2.0) {
-    addEvent("Indoor temperature changed noticeably (≥ 2°C)", "in_jump_" + String(Date.now()), stamp);
-  }
-  if (outT != null && prevOutdoorTemp != null && Math.abs(outT - prevOutdoorTemp) >= 2.0) {
-    addEvent("Outdoor temperature changed noticeably (≥ 2°C)", "out_jump_" + String(Date.now()), stamp);
-  }
-  if (inT != null) prevIndoorTemp = inT;
-  if (outT != null) prevOutdoorTemp = outT;
+  let vent = "--";
+  if (win !== null && win !== undefined) vent = win ? "Window open" : "Window closed";
 
-  // ---- ADVICE: cold inside + window open ----
-  if (win === true && inT != null && inT < 20) {
-    addAdvice("It’s cold inside and the window is open — consider closing it to keep warmth.", "cold_window", stamp);
-  } else {
-    delete shownAdvice["cold_window"];
+  let hum = "--";
+  if (inH != null) {
+    if (inH < 30) hum = "Dry";
+    else if (inH <= 60) hum = "OK";
+    else hum = "Humid";
   }
+  return { comfort, vent, hum };
+}
 
-  // ---- ADVICE: hot inside + window closed ----
-  if (win === false && inT != null && inT > 25) {
-    addAdvice("Room is getting warm — opening the window for a few minutes may help.", "hot_room", stamp);
-  } else {
-    delete shownAdvice["hot_room"];
-  }
+function renderAI(ai, meta, indoor) {
+  const summary = ai?.summary || "AI is analyzing environment...";
+  const recs = Array.isArray(ai?.recommendations) ? ai.recommendations : [];
+  const alerts = Array.isArray(ai?.alerts) ? ai.alerts : [];
 
-  // ---- ADVICE: very cold outside + window open ----
-  if (win === true && outT != null && outT < 5) {
-    addAdvice("Very cold outside — keeping the window open may cool the room quickly.", "very_cold_outside", stamp);
-  } else {
-    delete shownAdvice["very_cold_outside"];
+  if (aiSummaryEl) aiSummaryEl.textContent = summary;
+  fillList(aiRecsEl, recs, "No recommendations yet.");
+  fillList(aiAlertsEl, alerts, "No alerts.");
+
+  if (aiFreshness) {
+    const age = meta?.age_sec ?? "--";
+    const run = meta?.running ? "running" : "ready";
+    aiFreshness.textContent = `AI: ${run} • age ${age}s`;
   }
 
-  // ---- ADVICE: humidity high/low ----
-  if (inH != null && inH > 70) {
-    addAdvice("High humidity indoors — ventilation is recommended (mold risk).", "high_humidity", stamp);
-  } else {
-    delete shownAdvice["high_humidity"];
-  }
+  const badges = deriveBadges(indoor);
+  if (aiComfort) aiComfort.textContent = badges.comfort;
+  if (aiVent) aiVent.textContent = badges.vent;
+  if (aiHumidity) aiHumidity.textContent = badges.hum;
+}
 
-  if (inH != null && inH < 30) {
-    addAdvice("Air is too dry — consider a humidifier or a bowl of water near a heater.", "low_humidity", stamp);
-  } else {
-    delete shownAdvice["low_humidity"];
-  }
+window.clearAiRecs = () => fillList(aiRecsEl, [], "No recommendations yet.");
+window.clearAiAlerts = () => fillList(aiAlertsEl, [], "No alerts.");
 
-  // ---- ADVICE: comfort range hint ----
-  if (inT != null && inH != null) {
-    const okTemp = inT >= 20 && inT <= 24;
-    const okHum = inH >= 40 && inH <= 60;
-    if (!okTemp || !okHum) {
-      addAdvice("Comfort tip: aim for ~20–24°C and 40–60% humidity indoors.", "comfort_tip", stamp);
-    } else {
-      delete shownAdvice["comfort_tip"];
-    }
-  }
+// ===== Notifications UI =====
+function addNotif({ type, text, stamp }) {
+  if (!notifList) return;
 
-  // ---- LIGHT RULES (используем INDOOR свет для комнаты) ----
-  const hour = new Date().getHours();
-  if (inLux != null && inLux < 150 && hour < 22) {
-    addAdvice("It’s quite dark indoors — you may want to turn on the lights.", "dark_room", stamp);
-  } else {
-    delete shownAdvice["dark_room"];
-  }
+  const li = document.createElement("li");
 
-  // ---- Strong sunlight (используем OUTDOOR свет) ----
-  if (outLux != null && outLux > 800 && outT != null && outT > 25) {
-    addAdvice("Strong sunlight outside — closing blinds can help keep the room cooler.", "strong_sun", stamp);
-  } else {
-    delete shownAdvice["strong_sun"];
-  }
+  const left = document.createElement("div");
+  left.className = "left";
 
-  // ---- EVENTS: big inside/outside difference ----
-  if (inT != null && outT != null && Math.abs(inT - outT) > 10) {
-    addEvent("Large temperature difference between inside and outside", "temp_difference", stamp);
-  } else {
-    delete shownEvents["temp_difference"];
-  }
+  const badge = document.createElement("span");
+  badge.className = "badge";
+  badge.textContent = type;
 
-  // ---- EVENTS: very bright / very dark (по INDOOR) ----
-  if (inLux != null && inLux > 900) {
-    addEvent("Very bright light level indoors", "very_bright", stamp);
-  } else {
-    delete shownEvents["very_bright"];
-  }
+  const msg = document.createElement("div");
+  msg.textContent = text;
 
-  if (inLux != null && inLux < 50) {
-    addEvent("Very low light level indoors", "very_dark", stamp);
-  } else {
-    delete shownEvents["very_dark"];
-  }
+  left.appendChild(badge);
+  left.appendChild(msg);
 
-  // ---- Optional: pressure note (simple) ----
-  if (inP != null && inP < 990) {
-    addEvent("Low pressure detected — weather may become unstable", "low_pressure", stamp);
-  } else {
-    delete shownEvents["low_pressure"];
+  const time = document.createElement("span");
+  time.className = "timestamp";
+  time.textContent = stamp || "--";
+
+  li.appendChild(left);
+  li.appendChild(time);
+
+  notifList.prepend(li);
+  updateFade("notifList", 10);
+}
+
+function updateFade(listId, maxVisible = 10) {
+  const list = document.getElementById(listId);
+  const expanded = list?.classList.contains("expanded");
+
+  const items = document.querySelectorAll(`#${listId} li`);
+  items.forEach((item, idx) => {
+    const isOld = idx >= maxVisible;
+    if (expanded) item.classList.remove("hidden-old");
+    else item.classList.toggle("hidden-old", isOld);
+
+    item.classList.toggle("fade-old", isOld && expanded);
+  });
+}
+
+window.toggleOld = (listId, btn) => {
+  const list = document.getElementById(listId);
+  list.classList.toggle("expanded");
+  const expanded = list.classList.contains("expanded");
+  btn.textContent = expanded ? "Hide older" : "Show older";
+  updateFade(listId, 10);
+};
+
+window.clearNotifications = () => {
+  if (notifList) notifList.innerHTML = "";
+  seenEventIds = new Set();
+};
+
+// ===== Events polling (timeline stored in DB) =====
+async function fetchEvents(hours = 6) {
+  try {
+    const res = await fetch(`${EVENTS_URL}?hours=${hours}&limit=200`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Events error: ${res.status}`);
+    const data = await res.json();
+    const events = data?.events || [];
+
+    // events are newest->oldest; to display nicely, add from oldest to newest
+    const reversed = [...events].reverse();
+
+    reversed.forEach(ev => {
+      if (seenEventIds.has(ev.id)) return;
+      seenEventIds.add(ev.id);
+      const stamp = (ev.time_sk || "--").slice(11, 19); // HH:MM:SS
+      addNotif({ type: ev.type, text: ev.message, stamp });
+    });
+
+    updateFade("notifList", 10);
+  } catch (e) {
+    // no spam if backend down
+    console.error(e);
   }
 }
 
-// ====== FETCH LOOP ======
-async function fetchData() {
+// ===== UI UPDATE =====
+function updateUI(data) {
+  const serverTimeNice = data?.server_time_sk ? parseServerIsoToNice(data.server_time_sk) : "--";
+  if (skTimeEl) skTimeEl.textContent = serverTimeNice;
+
+  const indoor = data?.indoor || null;
+  const outdoor = data?.outdoor || null;
+
+  const indoorOk = indoor && (indoor.online === undefined ? true : !!indoor.online);
+  const outdoorOk = outdoor && (outdoor.online === undefined ? true : !!outdoor.online);
+
+  inTemp.textContent = indoorOk ? format(indoor.temp_c) : "--";
+  inHum.textContent  = indoorOk ? format(indoor.humidity_pct) : "--";
+  inPres.textContent = indoorOk ? format(indoor.pressure_hpa) : "--";
+  inLight.textContent = indoorOk && indoor.lux != null ? format(indoor.lux, 0) : "--";
+
+  outTemp.textContent = outdoorOk ? format(outdoor.temp_c) : "--";
+  outHum.textContent  = outdoorOk ? format(outdoor.humidity_pct) : "--";
+  outPres.textContent = outdoorOk ? format(outdoor.pressure_hpa) : "--";
+  outLight.textContent = outdoorOk && outdoor.lux != null ? format(outdoor.lux, 0) : "--";
+
+  setWindowState(indoorOk ? indoor.window_open : null);
+  if (windowMeta) windowMeta.textContent = indoorOk ? `data age: ${indoor.age_sec ?? "--"}s` : "no data";
+
+  setStatusPill(indoorStatus, indoor?.online, indoor?.age_sec);
+  setStatusPill(outdoorStatus, outdoor?.online, outdoor?.age_sec);
+
+  // ✅ Slovak time label for live chart
+  const skLabel = data?.server_time_sk ? parseServerIsoToNice(data.server_time_sk).slice(11, 19) : new Date().toLocaleTimeString();
+  pushLiveChart(skLabel, indoorOk ? indoor.temp_c : null, outdoorOk ? outdoor.temp_c : null);
+
+  renderAI(data.ai, data.ai_meta, indoor);
+}
+
+async function fetchAll() {
   try {
     const res = await fetch(API_URL, { cache: "no-store" });
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     const data = await res.json();
-    console.log("API DATA:", data);
     updateUI(data);
-  } catch (err) {
-    console.error("Fetch failed:", err);
+  } catch (e) {
+    console.error("Fetch failed:", e);
+    if (aiSummaryEl) aiSummaryEl.textContent = "Data unavailable (check backend).";
   }
 }
 
-fetchData();
-setInterval(fetchData, POLL_MS);
+// ===== HISTORY by hours =====
+function setHistoryChart(labels, inData, outData) {
+  historyChart.data.labels = labels;
+  historyChart.data.datasets[0].data = inData;
+  historyChart.data.datasets[1].data = outData;
+  historyChart.update();
+}
+
+async function loadHistory() {
+  const hours = rangeSel ? Number(rangeSel.value) : 1;
+  try {
+    const res = await fetch(`${HISTORY_URL}?hours=${encodeURIComponent(hours)}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`History error: ${res.status}`);
+    const data = await res.json();
+
+    setHistoryChart(data.labels || [], data.indoor_temp || [], data.outdoor_temp || []);
+
+    // also load events for same window (nice UX)
+    await fetchEvents(hours);
+  } catch (e) {
+    console.error("History load failed:", e);
+  }
+}
+
+if (loadHistoryBtn) loadHistoryBtn.addEventListener("click", loadHistory);
+
+// ===== CLEAR DB button =====
+async function clearDatabase() {
+  const ok = confirm("CLEAR the database (measurements + notifications)? This cannot be undone.");
+  if (!ok) return;
+
+  const token = prompt("Enter admin token:");
+  if (!token) return;
+
+  try {
+    const res = await fetch(CLEAR_URL, {
+      method: "POST",
+      headers: { "X-ADMIN-TOKEN": token }
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
+
+    // reset UI
+    tempChart.data.labels = [];
+    tempChart.data.datasets[0].data = [];
+    tempChart.data.datasets[1].data = [];
+    tempChart.update();
+
+    historyChart.data.labels = [];
+    historyChart.data.datasets[0].data = [];
+    historyChart.data.datasets[1].data = [];
+    historyChart.update();
+
+    window.clearNotifications();
+    addNotif({ type: "ADMIN", text: "Database cleared.", stamp: new Date().toLocaleTimeString() });
+
+  } catch (e) {
+    alert(`Clear failed: ${e.message}`);
+  }
+}
+if (clearDbBtn) clearDbBtn.addEventListener("click", clearDatabase);
+
+// ===== start =====
+fetchAll();
+setInterval(fetchAll, POLL_MS);
+
+// pull notifications from backend timeline continuously
+fetchEvents(6);
+setInterval(() => fetchEvents(6), EVENTS_POLL_MS);
+
+// initial history (1h) after small delay
+setTimeout(loadHistory, 2500);

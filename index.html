@@ -1,76 +1,122 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Smart Environment Monitor</title>
-    <link rel="stylesheet" href="style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Environment Monitor</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
+  <header class="header">
+    <h1>Environment Intelligence</h1>
+    <p>Live data from your smart IoT weather system</p>
+    <p class="timebar">Slovak time: <span id="skTime">--</span></p>
+  </header>
 
-<div class="container">
-    <header>
-        <h1>Environment Intelligence</h1>
-        <p>Live data from your smart IoT weather system</p>
-    </header>
-
+  <main class="container">
     <section class="cards">
-        <div class="card">
-            <h2>Indoor</h2>
-            <div class="data"><span id="inTemp">--</span>°C</div>
-            <div class="sub">Humidity: <span id="inHum">--</span>%</div>
-            <div class="sub">Pressure: <span id="inPres">--</span> hPa</div>
-        </div>
+      <div class="card">
+        <h3>Indoor</h3>
+        <div class="value"><span id="inTemp">--</span>°C</div>
+        <div class="sub">Humidity: <span id="inHum">--</span>%</div>
+        <div class="sub">Pressure: <span id="inPres">--</span> hPa</div>
+      </div>
 
-        <div class="card">
-            <h2>Outdoor</h2>
-            <div class="data"><span id="outTemp">--</span>°C</div>
-            <div class="sub">Humidity: <span id="outHum">--</span>%</div>
-            <div class="sub">Pressure: <span id="outPres">--</span> hPa</div>
-        </div>
+      <div class="card">
+        <h3>Outdoor</h3>
+        <div class="value"><span id="outTemp">--</span>°C</div>
+        <div class="sub">Humidity: <span id="outHum">--</span>%</div>
+        <div class="sub">Pressure: <span id="outPres">--</span> hPa</div>
+      </div>
 
-        <div class="card">
-           <h2>Light Level</h2>
+      <div class="card">
+        <h3>Light Level</h3>
+        <div class="sub">Indoor: <span id="inLight">--</span> lux</div>
+        <div class="sub">Outdoor: <span id="outLight">--</span> lux</div>
+      </div>
 
-            <div class="sub">
-              Indoor: <span id="inLight">--</span> lux
-            </div>
-
-            <div class="sub">
-              Outdoor: <span id="outLight">--</span> lux
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>Window</h2>
-            <div class="data" id="windowState">--</div>
-        </div>
+      <div class="card window-card">
+        <h3>Window</h3>
+        <div class="value" id="windowState">--</div>
+        <div class="sub" id="windowMeta">--</div>
+      </div>
     </section>
 
-    <section class="advice">
-        <div class="section-header">
-            <h2>Smart Recommendations</h2>
-            <button onclick="clearAdvice()">Clear</button>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Live Temperature</h2>
+        <div class="panel-actions">
+          <span class="pill" id="indoorStatus">Indoor: --</span>
+          <span class="pill" id="outdoorStatus">Outdoor: --</span>
         </div>
-        <ul id="adviceList" class="fade-list"></ul>
-        <button class="show-more" onclick="toggleOld('adviceList', this)">Show older messages</button>
+      </div>
+      <canvas id="tempChart" height="110"></canvas>
     </section>
 
-    <section class="chart-section">
-        <canvas id="tempChart"></canvas>
-    </section>
-
-    <section class="events">
-        <div class="section-header">
-            <h2>Smart Insights</h2>
-            <button onclick="clearEvents()">Clear</button>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>History</h2>
+        <div class="panel-actions">
+          <select id="historyRange" class="select">
+            <option value="1">Last 1 hour</option>
+            <option value="6">Last 6 hours</option>
+            <option value="24">Last 24 hours</option>
+          </select>
+          <button class="btn" id="loadHistoryBtn">Load history</button>
+          <button class="btn" id="clearDbBtn">Clear database</button>
         </div>
-        <ul id="eventsList" class="fade-list"></ul>
-        <button class="show-more" onclick="toggleOld('eventsList', this)">Show older messages</button>
+      </div>
+      <canvas id="historyChart" height="110"></canvas>
+      <div class="hint">History uses Slovak time labels and reads from SQLite on backend.</div>
     </section>
-</div>
 
-<script src="app.js"></script>
+    <section class="ai-grid">
+      <div class="ai-card">
+        <div class="ai-head">
+          <h2>Smart Insights</h2>
+          <span class="tag" id="aiFreshness">AI: --</span>
+        </div>
+        <p id="aiSummary" class="ai-summary">AI is analyzing environment...</p>
+
+        <div class="ai-kv">
+          <div class="kv"><div class="k">Comfort</div><div class="v" id="aiComfort">--</div></div>
+          <div class="kv"><div class="k">Ventilation</div><div class="v" id="aiVent">--</div></div>
+          <div class="kv"><div class="k">Humidity</div><div class="v" id="aiHumidity">--</div></div>
+        </div>
+      </div>
+
+      <div class="ai-card">
+        <div class="ai-head">
+          <h2>Smart Recommendations</h2>
+          <button class="btn small" onclick="clearAiRecs()">Clear</button>
+        </div>
+        <ul id="aiRecs" class="ai-list"></ul>
+      </div>
+
+      <div class="ai-card">
+        <div class="ai-head">
+          <h2>AI Alerts</h2>
+          <button class="btn small" onclick="clearAiAlerts()">Clear</button>
+        </div>
+        <ul id="aiAlerts" class="ai-list"></ul>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Notifications</h2>
+        <div class="panel-actions">
+          <button class="btn small" onclick="clearNotifications()">Clear</button>
+          <button class="btn small" onclick="toggleOld('notifList', this)">Show older</button>
+        </div>
+      </div>
+      <ul id="notifList" class="notif-list"></ul>
+      <div class="hint">Notifications are stored on backend in DB, so they survive page refresh.</div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
 </body>
 </html>
